@@ -68,9 +68,10 @@ export default function HomePage() {
   const refreshTasks = useCallback(async () => {
     try {
       const { jobs, recent, queue } = await api.jobsOverview();
-      setTasks({ active: jobs, recent, waiting: queue.waiting });
+      // 防御性缺省：服务端仍是旧版本（缺少新字段）时也不白屏
+      setTasks({ active: jobs ?? [], recent: recent ?? [], waiting: queue?.waiting ?? 0 });
       const prev = prevStatusRef.current;
-      const all = [...jobs, ...recent];
+      const all = [...(jobs ?? []), ...(recent ?? [])];
       if (!seededRef.current) {
         for (const j of all) prev.set(j.id, j.status);
         seededRef.current = true;
@@ -539,9 +540,9 @@ export default function HomePage() {
                     </div>
                   ))}
                 </div>
-                {tasks.active.length === 1 && tasks.active[0].log.length > 0 && (
+                {tasks.active.length === 1 && (tasks.active[0].log?.length ?? 0) > 0 && (
                   <pre className="log-box" style={{ marginTop: 8 }}>
-                    {tasks.active[0].log.slice(-6).join('\n')}
+                    {(tasks.active[0].log ?? []).slice(-6).join('\n')}
                   </pre>
                 )}
               </>
