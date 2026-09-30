@@ -1,0 +1,306 @@
+/* ============================================================
+   NovelCast · MiniMax 设计语言（DESIGN.md）
+   纯白画布 + 近黑墨色 + 黑色药丸按钮；发丝线边框、扁平无重影；
+   品牌彩色只留给"专辑封面时刻"（详情页黑色 32px 播放器大卡）。
+   对比度铁律：正文对比度全部 ≥ 4.5:1，禁止同底色近色文字。
+   ============================================================ */
+
+:root {
+  /* Surface */
+  --canvas: #ffffff;
+  --surface: #f7f8fa;
+  --surface-soft: #f2f3f5;
+  --hairline: #e5e7eb;
+  --hairline-soft: #eaecf0;
+  /* Ink */
+  --ink: #0a0a0a;
+  --ink-strong: #000000;
+  --charcoal: #222222;
+  --slate: #45515e;
+  --steel: #5f5f5f;
+  --stone: #8e8e93;
+  --muted: #a8aab2;
+  /* Brand（仅用于身份时刻，不作正文色） */
+  --coral: #ff5530;
+  --coral-deep: #c2340f;      /* 浅珊瑚底上的深珊瑚字，5.1:1 */
+  --coral-pale: #ffe9e3;
+  --blue: #1456f0;
+  --blue-deep: #1d4ed8;
+  --blue-pale: #bfdbfe;
+  --magenta: #ea5ec1;
+  --purple: #a855f7;
+  /* Semantic（success 文字加深以满足 4.5:1） */
+  --success-bg: #e8ffea;
+  --success-text: #147a52;
+  --error: #d45656;
+
+  --font-sans: 'DM Sans', Inter, 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'Cascadia Mono', 'JetBrains Mono', Consolas, 'SFMono-Regular', monospace;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+  --r-hero: 32px;
+  --r-full: 9999px;
+}
+
+html, body { background: var(--canvas); }
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+/* ---------- 顶栏：白色吸泥条，segmented-tab 导航 ---------- */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  padding: 0 28px;
+  height: 60px;
+  background: var(--canvas);
+  border-bottom: 1px solid var(--hairline-soft);
+}
+.brand { display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
+.brand-en { font-size: 18px; font-weight: 700; letter-spacing: -0.02em; color: var(--ink); }
+.brand-zh { font-size: 13px; font-weight: 500; color: var(--slate); padding: 2px 10px; border: 1px solid var(--hairline); border-radius: var(--r-full); }
+.topbar-nav { margin-left: auto; display: flex; gap: 4px; }
+.topbar-link {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--steel);
+  cursor: pointer;
+  padding: 6px 16px;
+  border-radius: var(--r-full);
+  transition: color 0.15s, background 0.15s;
+}
+.topbar-link:hover { color: var(--ink); background: var(--surface); }
+.topbar-link.active { color: var(--ink); background: var(--surface); }
+.topbar-time { font-size: 12px; font-weight: 500; color: var(--stone); letter-spacing: 0.14em; }
+
+/* ---------- 页面骨架 ---------- */
+.page { max-width: 920px; margin: 0 auto; padding: 36px 20px 64px; }
+.page-wide { max-width: 980px; }
+
+/* 入场编排 */
+.reveal { opacity: 0; transform: translateY(10px); animation: rise 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) forwards; }
+.reveal.d1 { animation-delay: 0.03s; }
+.reveal.d2 { animation-delay: 0.12s; }
+.reveal.d3 { animation-delay: 0.21s; }
+.reveal.d4 { animation-delay: 0.3s; }
+@keyframes rise { to { opacity: 1; transform: none; } }
+
+/* ---------- 首页主视觉（app 尺度的 display） ---------- */
+.hero { margin: 8px 2px 30px; }
+.hero-kicker {
+  display: inline-block;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  color: var(--steel);
+  margin-bottom: 14px;
+}
+.hero-title {
+  font-size: 40px;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -1px;
+  color: var(--ink);
+  margin: 0 0 12px;
+}
+.hero-title em { font-style: normal; color: var(--blue-deep); }
+.hero-sub { color: var(--slate); font-size: 16px; line-height: 1.5; margin: 0; }
+
+/* ---------- 卡片：白底发丝线，扁平 ---------- */
+.panel { border: 1px solid var(--hairline) !important; border-radius: var(--r-xl) !important; box-shadow: none !important; }
+.panel > .ant-card-head { border-bottom-color: var(--hairline-soft); }
+.h-title { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); }
+.h-count { font-size: 13px; font-weight: 600; color: var(--stone); letter-spacing: 0.08em; margin-left: 8px; }
+
+/* ---------- 节目单 ---------- */
+.ep-list { display: flex; flex-direction: column; }
+.ep-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 16px 14px;
+  border-radius: var(--r-lg);
+  border: 1px solid transparent;
+  transition: background 0.15s, border-color 0.15s;
+}
+.ep-row:hover { background: var(--surface); border-color: var(--hairline-soft); }
+.ep-row + .ep-row { margin-top: 4px; }
+.ep-no { font-size: 16px; font-weight: 600; color: var(--stone); width: 32px; flex-shrink: 0; text-align: right; }
+.ep-main { flex: 1; min-width: 0; }
+.ep-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ep-title:hover { color: var(--blue-deep); }
+.ep-meta { margin-top: 5px; font-size: 13px; color: var(--slate); display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+.ep-meta .mono { font-family: var(--font-mono); font-size: 12px; color: var(--steel); }
+.ep-actions { display: flex; gap: 2px; flex-shrink: 0; }
+
+/* 药丸徽章：浅底深字，全部 ≥ 4.5:1 */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: var(--r-full);
+  padding: 2px 9px;
+  letter-spacing: 0.02em;
+}
+.chip.blue { background: var(--blue-pale); color: var(--blue-deep); }
+.chip.green { background: var(--success-bg); color: var(--success-text); }
+.chip.coral { background: var(--coral-pale); color: var(--coral-deep); }
+.chip.ink { background: var(--ink); color: #ffffff; }
+
+/* ---------- 详情：黑色专辑封面播放器（rounded.hero 的身份时刻） ---------- */
+.deck {
+  border-radius: var(--r-hero);
+  background: radial-gradient(120% 160% at 85% -20%, #2b2b2b 0%, var(--ink-strong) 55%);
+  color: #ffffff;
+  padding: 24px 26px 18px;
+}
+.deck-main { display: flex; align-items: center; gap: 16px; }
+.play-btn {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--r-full);
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-strong);
+  background: #ffffff;
+  transition: transform 0.15s;
+  font-size: 19px;
+}
+.play-btn:hover { transform: scale(1.05); }
+.play-btn:active { transform: scale(0.97); }
+
+.vu { display: flex; align-items: flex-end; gap: 3px; height: 20px; flex-shrink: 0; }
+.vu span { width: 3px; height: 5px; border-radius: 2px; background: var(--coral); animation: vu 0.9s ease-in-out infinite; }
+.vu span:nth-child(2) { animation-delay: 0.12s; }
+.vu span:nth-child(3) { animation-delay: 0.24s; }
+.vu span:nth-child(4) { animation-delay: 0.36s; }
+.vu span:nth-child(5) { animation-delay: 0.48s; }
+.vu.off span { animation: none; height: 4px; opacity: 0.4; }
+@keyframes vu { 0%, 100% { height: 5px; } 50% { height: 20px; } }
+
+.deck-time { font-family: var(--font-mono); font-size: 15px; color: rgba(255, 255, 255, 0.72); white-space: nowrap; }
+.deck-time b { color: #ffffff; font-weight: 700; }
+
+input[type='range'].deck-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+  background: linear-gradient(to right, var(--coral) var(--fill, 0%), rgba(255, 255, 255, 0.22) var(--fill, 0%));
+}
+input[type='range'].deck-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: none;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.5);
+}
+
+.deck-meta { margin-top: 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.onair { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; letter-spacing: 0.16em; color: rgba(255, 255, 255, 0.72); }
+.onair i { width: 8px; height: 8px; border-radius: 50%; background: var(--coral); }
+.onair.live { color: #ffffff; }
+.onair.live i { animation: blink 1.2s ease-in-out infinite; }
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+.deck-hint { font-size: 12px; font-weight: 500; color: rgba(255, 255, 255, 0.56); letter-spacing: 0.1em; }
+
+/* ---------- 详情：文稿 ---------- */
+.script { max-height: 480px; overflow: auto; padding-right: 4px; }
+.script-line {
+  display: flex;
+  gap: 14px;
+  padding: 9px 12px;
+  border-radius: var(--r-md);
+  border-left: 2px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.script-line:hover { background: var(--surface); }
+.script-line.active { background: var(--surface); border-left-color: var(--ink); }
+.script-who { flex-shrink: 0; width: 56px; padding-top: 2px; }
+.script-who .chip { width: 100%; justify-content: center; }
+.script-text { font-size: 15px; line-height: 1.65; color: var(--charcoal); }
+.script-line.active .script-text { color: var(--ink); font-weight: 500; }
+
+/* ---------- 杂项 ---------- */
+/* 统一提示条：全站所有 tips 用同一种容器（surface 底 + 发丝线 + 图标） */
+.tip-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-lg);
+  padding: 12px 16px;
+  margin-bottom: 24px;
+  color: var(--charcoal);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.tip-banner > .anticon { font-size: 16px; color: var(--steel); flex-shrink: 0; }
+.tip-banner .tip-action { margin-left: auto; flex-shrink: 0; }
+.tip-banner .tip-body { flex: 1; min-width: 220px; }
+.tip-banner .tip-body .sub { font-size: 12px; color: var(--steel); margin-top: 2px; }
+
+.meta-strip { font-size: 13px; color: var(--slate); display: flex; flex-wrap: wrap; gap: 4px 0; align-items: center; }
+.meta-strip .sep { margin: 0 10px; color: var(--hairline); }
+.meta-strip .hl { color: var(--ink); font-weight: 600; }
+
+.log-box {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--slate);
+  background: var(--surface);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--r-md);
+  padding: 10px 12px;
+  max-height: 160px;
+  overflow: auto;
+  margin: 0;
+}
+
+.page-footer {
+  background: var(--ink-strong);
+  color: var(--muted);
+  font-size: 12px;
+  padding: 18px 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.page-footer b { color: #ffffff; font-weight: 700; letter-spacing: 0.04em; }
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal { animation: none; opacity: 1; transform: none; }
+  .vu span, .onair.live i { animation: none; }
+}

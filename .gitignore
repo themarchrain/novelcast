@@ -1,0 +1,24 @@
+# 依赖与构建产物
+node_modules/
+dist/
+dist-server/
+
+# 运行时数据（config.json 含 API Key、播客音频、音色样本）
+data/
+
+# 本地私有扩展（源 / 语音服务实现）：放入即注册，重启生效
+extensions-local/**
+!extensions-local/
+!extensions-local/sources/
+!extensions-local/sources/.gitkeep
+
+*.log
+*.exe
+.cache/
+log/
+logs/
+tmp/
+temp/
+.DS_Store
+Thumbs.db
+.env
