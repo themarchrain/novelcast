@@ -98,8 +98,11 @@ api.get('/podcasts/:id/download', async (req, res) => {
   if (!data) return bad(res, new Error('播客不存在'), 404);
   const p = await podcastAudioPath(req.params.id);
   if (!p) return bad(res, new Error('音频不存在'), 404);
+  // 直接传原始文件名：Express 会生成 RFC 5987 的 filename*=UTF-8''… 参数，
+  // 浏览器据此还原中文名；若在此处手动 encodeURIComponent，会被当成普通
+  // ASCII 写进旧式 filename= 参数，下载下来就变成一串百分号编码。
   const filename = `${data.meta.title.replace(/[\\/:*?"<>|]/g, '_')}.mp3`;
-  res.download(p, encodeURIComponent(filename), (err) => {
+  res.download(p, filename, (err) => {
     if (err && !res.headersSent) bad(res, new Error('下载失败'), 500);
   });
 });
