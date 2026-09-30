@@ -4,7 +4,7 @@
 
 > **本项目不含任何针对具体网站的爬取器。**"章节文本从哪来"由数据源（Source）决定——仓库内置零数据源，把你的源放入 `extensions-local/sources/` 即注册使用，详见下方[数据源](#数据源source)一节。
 
-当前支持：贴入章节页 URL，单章产出。TXT 整本书上传 + 智能分章尚未实现。
+当前支持两种输入通道：**URL 单章**（贴入章节页地址）与 **TXT 整本书批量**（上传整本 TXT，按章多选，批量产出）。
 
 ## 快速开始
 
@@ -32,6 +32,7 @@ npm start          # 打开 http://127.0.0.1:7749
 - 把源放入 `extensions-local/sources/<源名>/`（入口 `index.ts` 或 `index.js`），**重启服务即注册**；该目录已被 gitignore，私有实现与调试代码永不入库；
 - 输入章节地址后，按注册顺序自动匹配第一个命中的源（`matchUrl`），也可在首页手动指定；
 - 接口契约见 [`server/sources/types.ts`](server/sources/types.ts)：`NovelSource { id, label, matchUrl?, inputs, listChapters, fetchChapter }`——爬取、解密、清洗全部发生在源内部，核心只接收一章全量文本。
+- 声明了 `type:'file'` 输入的源构成 **TXT 批量通道**：上传的文件由核心原样落盘到 `data/uploads/<id>/<原文件名>`，源拿到的输入值是文件绝对路径——读取、分章、取章全部在源内部；首页会列出该源解析出的章节供多选，选中后按章入队依次产出。
 
 **为什么只有静态扩展**：运行时上传注册代码等于让任何能访问服务的人以服务进程身份执行任意代码；目录加载的代码与主程序同信任级别，且任何改动必须经过一次重启——重启即审计点。
 
@@ -63,7 +64,7 @@ npm start          # 打开 http://127.0.0.1:7749
 
 | 功能 | 说明 |
 |---|---|
-| 章节获取 | 由数据源决定：URL 自动匹配 + 手动指定；契约见 `server/sources/` |
+| 输入通道 | **URL 单章**：按注册顺序自动匹配源，也可手动指定；**TXT 整本书批量**：上传后按章多选，每章一期依次产出，单章失败不影响其余 |
 | 讲解形式 | 双人讲解（一男一女对谈）/ 单人讲解（可选男生或女生的声音） |
 | AI 写稿 | OpenAI 兼容 `/chat/completions`；长章节自动分块续写；台词强制口语化短句、带语气词 |
 | 语音合成 | 三通道见上表；VoxCPM 输出 48kHz，经 lamejs 转 128kbps MP3 进入统一管线 |
@@ -78,6 +79,7 @@ npm start          # 打开 http://127.0.0.1:7749
 novelcast/
 ├─ server/                      Express + TS 服务端
 │  ├─ sources/                  源契约 types.ts + 静态加载注册表 registry.ts（核心只面对契约）
+│  ├─ uploads.ts                上传文件落盘 data/uploads/（file 类源输入的取值）
 │  ├─ llm.ts                    OpenAI 兼容 chat/completions 客户端 + JSON 容错解析
 │  ├─ script.ts                 播客脚本生成（单播/双播 prompt、长文分块）
 │  ├─ tts/                      语音合成
@@ -86,7 +88,7 @@ novelcast/
 │  │  ├─ openai.ts              OpenAI 兼容 /audio/speech（含 SiliconFlow 语气指令）
 │  │  └─ wav.ts                 RIFF/PCM16 解析
 │  ├─ mp3.ts                    MP3 帧级解析（总时长、分段时长）
-│  ├─ jobs.ts                   生成管线（取章→写稿→逐段合成→拼接→落盘）+ 串行队列
+│  ├─ jobs.ts                   生成管线（取章→写稿→逐段合成→拼接→落盘）+ 串行队列（批量＝每章一个任务）
 │  └─ store.ts                  文件存储 data/podcasts/<id>/（meta/script/audio），无数据库
 ├─ src/                         React 18 + Vite + antd 前端（首页 / 详情 / 设置）
 ├─ extensions-local/            本地私有扩展（gitignore）：sources/<源名>/ 一源一目录，放入即注册
@@ -111,7 +113,3 @@ AI 协作开发请先读 [AGENTS.md](AGENTS.md)——里面有架构口径、源
 - 本地 VoxCPM 合成速度约 3~5 倍实时（笔记本 GPU 实测），整章生成需要等待；赶时间用 SiliconFlow。
 - 服务默认只监听 `127.0.0.1`，需要局域网访问时用 `HOST=0.0.0.0 npm start`。
 - Windows 终端日志中文乱码时先 `chcp 65001`。
-
-## 规划中（未实现）
-
-TXT 整本书上传 → 智能分章（标题正则 + 启发式）→ 按章节批量产出播客。源接口的 `inputs` 已预留 `type:'file'` 文件输入。

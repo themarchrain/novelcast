@@ -1,4 +1,4 @@
-import type { AppConfig, Job, PodcastData, PodcastMeta, SourceInfo, VoiceOption } from './types';
+import type { AppConfig, ChapterListItem, Job, PodcastData, PodcastMeta, SourceInfo, VoiceOption } from './types';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -19,12 +19,39 @@ export const api = {
   createPodcast: (body: {
     sourceId?: string;
     inputs: Record<string, string>;
+    /** 批量模式：选定的章节引用列表（每章一个任务） */
+    refs?: string[];
     mode: string;
     maleVoice?: string;
     femaleVoice?: string;
-  }) => request<{ jobId: string }>('/api/podcasts', { method: 'POST', body: JSON.stringify(body) }),
+  }) => request<{ jobId: string; jobIds: string[] }>('/api/podcasts', { method: 'POST', body: JSON.stringify(body) }),
 
   getSources: () => request<SourceInfo[]>('/api/sources'),
+
+  /** 列出某源对给定输入解析出的章节 */
+  listChapters: (sourceId: string, inputs: Record<string, string>) =>
+    request<{ chapters: ChapterListItem[] }>(
+      `/api/sources/${encodeURIComponent(sourceId)}/chapters`,
+      { method: 'POST', body: JSON.stringify({ inputs }) },
+    ),
+
+  /** 上传文件（原始字节），返回落盘路径（作为 file 类源输入传回） */
+  uploadFile: async (file: File): Promise<{ id: string; path: string; name: string; bytes: number }> => {
+    const res = await fetch(`/api/uploads?name=${encodeURIComponent(file.name)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: await file.arrayBuffer(),
+    });
+    const data = (await res.json().catch(() => null)) as { error?: string } | null;
+    if (!res.ok) throw new Error(data?.error || `上传失败（HTTP ${res.status}）`);
+    return data as { id: string; path: string; name: string; bytes: number };
+  },
+
+  /** 批量任务状态（含队列概况） */
+  jobsStatus: (ids: string[]) =>
+    request<{ jobs: Job[]; queue: { waiting: number; running: boolean } }>(
+      `/api/jobs?ids=${ids.map(encodeURIComponent).join(',')}`,
+    ),
 
   getJob: (id: string) => request<Job>(`/api/jobs/${id}`),
 

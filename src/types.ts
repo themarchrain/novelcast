@@ -91,3 +91,12 @@ export interface SourceInfo {
   description?: string;
   inputs: SourceInputField[];
 }
+
+/** 源对给定输入解析出的章节（TXT 源＝分章结果；URL 源＝单章） */
+export interface ChapterListItem {
+  sourceId: string;
+  ref: string;
+  bookTitle?: string;
+  chapterTitle?: string;
+  chars?: number;
+}

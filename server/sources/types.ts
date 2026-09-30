@@ -21,6 +21,8 @@ export interface ChapterRef {
   ref: string;
   bookTitle?: string;
   chapterTitle?: string;
+  /** 正文字符数（估算，供章节选择界面展示） */
+  chars?: number;
 }
 
 export interface ChapterContent {

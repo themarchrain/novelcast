@@ -8,7 +8,7 @@ NovelCast 是一条「章节文本 → 播客音频」的流水线：**接收一
 
 - 技术栈：React 18 + Vite + antd（前端）；Express 5 + TypeScript（后端，tsx 直接运行 TS，**生产也是 tsx**）；vitest。
 - AI（LLM）只有一个接入点：写稿（`server/script.ts`）。正文清洗、拼接、落盘都是普通代码。
-- 当前支持：URL 输入、单章产出；TXT 整本书上传、智能分章与多章批量产出尚未实现。
+- 当前支持：URL 单章输入；TXT 整本书上传后按章批量产出。
 
 ## 一条原则
 
@@ -38,11 +38,14 @@ NovelCast 是一条「章节文本 → 播客音频」的流水线：**接收一
   ⑤ store.ts：落盘 data/podcasts/<id>/{meta.json,script.json,audio.mp3}
 ```
 
+批量通道（TXT 整本书）：前端先调 `POST /api/sources/:id/chapters` 列出章节 → 用户多选 → `POST /api/podcasts` 带 `refs` 一次入队（每章一个任务，复用同一管线、串行执行；单章失败不影响其余）。
+
 | 模块 | 职责 |
 |---|---|
 | `server/sources/types.ts` | 源契约：`NovelSource { id, label, matchUrl?, inputs, listChapters, fetchChapter }` |
 | `server/sources/registry.ts` | 启动扫描 `extensions-local/sources/` → 形状校验 → 注册；URL 自动匹配（注册序首个命中）；`GET /api/sources` 能力清单 |
-| `server/jobs.ts` | 串行任务队列 + 进度上报 |
+| `server/uploads.ts` | 上传文件落盘 `data/uploads/<id>/<原文件名>`（`POST /api/uploads` 收原始字节，校验 UTF-8）；file 类源输入的取值即该文件绝对路径 |
+| `server/jobs.ts` | 串行任务队列 + 进度上报；`GET /api/jobs?ids=` 批量查询（批量进度面板用） |
 | `server/script.ts` / `llm.ts` | LLM 写稿 / OpenAI 兼容客户端（BaseURL 自动补全 `/v1/chat/completions`，`#` 结尾用原样地址） |
 | `server/tts/*` | 三通道合成；`wav.ts` 解析 RIFF/PCM16，`voxcpm.ts` 用 lamejs 转 128kbps MP3 |
 | `server/mp3.ts` | MPEG1/2/2.5 Layer3 帧解析、ID3v2 跳过 |
@@ -55,6 +58,7 @@ NovelCast 是一条「章节文本 → 播客音频」的流水线：**接收一
 
 - 一个源一个目录：`extensions-local/sources/<源名>/`，入口 `index.ts`（推荐，tsx 环境可直接用 TS）或 `index.js`，默认导出 `NovelSource`。
 - **自包含**：源目录内自带所需工具（HTTP 封装、清洗规则），拷走即用；核心不为源提供爬取工具函数。
+- `type:'file'` 输入的取值是核心保存在 `data/uploads/<id>/<原文件名>` 的文件绝对路径（前端经 `POST /api/uploads` 上传）；读取与分章都在源内部。想让用户按章挑选，在 `listChapters` 返回完整章节列表即可（`chapterTitle`/`chars` 会渲染到选择界面），`ref` 自定编码、`fetchChapter` 按它取回单章。
 - 类型引入：`import type { NovelSource } from '../../../server/sources/types.js'`（仅 type import，运行时零依赖）。
 - 形状校验：启动时逐个校验（id/label/inputs/两个方法），不合法跳过并打 `[源]` 告警，不阻断启动；id 冲突按目录名字母序先到先得。
 - `matchUrl` 恒真即兜底源——把它放注册顺序最后（目录名靠后），让更具体的源先命中；不实现 `matchUrl` 的源只能手动选择。
@@ -81,7 +85,7 @@ NovelCast 是一条「章节文本 → 播客音频」的流水线：**接收一
 
 ## 当前状态
 
-- 核心流水线可用：数据源取章 → LLM 写稿 → 逐句语音合成 → MP3 拼接落盘，串行任务队列 + 进度上报。
+- 核心流水线可用：数据源取章 → LLM 写稿 → 逐句语音合成 → MP3 拼接落盘，串行任务队列 + 进度上报；前端支持 URL 单章与 TXT 整本书批量两条输入通道。
 - 源契约与静态注册表已落地（`server/sources/`）：仓库零爬取实现、内置零源是刻意设计；本地源放 `extensions-local/sources/`（gitignore，不入库）。
 - 语音合成三通道可用：本地 VoxCPM（默认）/ OpenAI 兼容云端 / Edge 免费保底。
 - 测试双层：`npm test` 覆盖核心、`npm run test:local` 覆盖本地源。

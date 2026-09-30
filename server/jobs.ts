@@ -16,8 +16,10 @@ let running = false;
 export interface CreatePodcastParams {
   /** 显式指定数据源 id；缺省时按 URL 自动匹配 */
   sourceId?: string;
-  /** 源表单输入（URL 源即 {url: "章节页地址"}） */
+  /** 源表单输入（URL 源即 {url: "章节页地址"}；file 类源为上传文件的绝对路径） */
   inputs: Record<string, string>;
+  /** 批量模式：已选定的章节引用（核心不解释其内容，直接交给源） */
+  ref?: string;
   mode: PodcastMode;
   /** 单播时的主说话人（男声/女声） */
   soloSpeaker?: Speaker;
@@ -27,6 +29,11 @@ export interface CreatePodcastParams {
 
 export function getJob(id: string): Job | null {
   return jobs.get(id) || null;
+}
+
+/** 队列状态（批量进度面板用）：等待中的任务数 + 是否正在执行 */
+export function queueStats(): { waiting: number; running: boolean } {
+  return { waiting: queue.length, running };
 }
 
 function update(id: string, patch: Partial<Job>): void {
@@ -91,15 +98,21 @@ async function pipeline(jobId: string, params: CreatePodcastParams): Promise<voi
 
   // 1. 取章：选源 → 源内部完成抓取/解密/清洗，交回一章全量文本
   const url = (params.inputs.url || '').trim();
-  if (!url) throw new Error('请填写小说章节页 URL');
+  if (!params.ref && !url) throw new Error('请填写小说章节页 URL');
   const source = selectSource(url, params.sourceId);
   update(jobId, { step: '抓取正文', progress: 3, message: `正在通过数据源「${source.label}」获取正文…` });
   log(jobId, `数据源：${source.label}（${source.id}）`);
-  log(jobId, `章节引用：${url}`);
-  const refs: ChapterRef[] = await source.listChapters({ url });
-  // 当前为单章输出，取第一个章节引用；多章批量产出待扩展
-  if (refs.length === 0) throw new Error(`数据源「${source.id}」未返回任何章节`);
-  const chapter = await source.fetchChapter(refs[0]);
+  log(jobId, `章节引用：${params.ref ?? url}`);
+  let ref: ChapterRef;
+  if (params.ref) {
+    // 批量模式：章节引用由用户选定（经 /api/sources/:id/chapters 列出），核心不解释其内容
+    ref = { sourceId: source.id, ref: params.ref };
+  } else {
+    const listed: ChapterRef[] = await source.listChapters({ url });
+    if (listed.length === 0) throw new Error(`数据源「${source.id}」未返回任何章节`);
+    ref = listed[0];
+  }
+  const chapter = await source.fetchChapter(ref);
   const charCount = chapter.text.replace(/\s/g, '').length;
   log(
     jobId,
@@ -167,7 +180,7 @@ async function pipeline(jobId: string, params: CreatePodcastParams): Promise<voi
     maleVoice: params.maleVoice,
     femaleVoice: params.femaleVoice,
     createdAt: new Date().toISOString(),
-    sourceUrl: refs[0].ref || url,
+    sourceUrl: ref.ref || url,
     sourceId: source.id,
     bookTitle: chapter.bookTitle,
     author: chapter.author,

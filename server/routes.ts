@@ -1,8 +1,8 @@
-import { Router } from 'express';
+import { Router, raw } from 'express';
 import { maskKey, isMaskedKey } from './config.js';
 import { loadConfig, saveConfig } from './store.js';
-import { listSources, selectSource } from './sources/registry.js';
-import { createPodcastJob, getJob } from './jobs.js';
+import { getSource, listSources, selectSource } from './sources/registry.js';
+import { createPodcastJob, getJob, queueStats, type CreatePodcastParams } from './jobs.js';
 import {
   deletePodcast,
   getPodcast,
@@ -10,6 +10,7 @@ import {
   listPodcasts,
   podcastAudioPath,
 } from './store.js';
+import { saveUpload } from './uploads.js';
 import { chat } from './llm.js';
 import { listVoices, previewVoice } from './tts/index.js';
 import type { AppConfig, PodcastMode } from './types.js';
@@ -31,6 +32,12 @@ function mask(cfg: AppConfig): AppConfig {
   };
 }
 
+function normalizeInputs(inputs: Record<string, unknown> | undefined): Record<string, string> {
+  const normalized: Record<string, string> = {};
+  for (const [k, v] of Object.entries(inputs || {})) normalized[k] = String(v ?? '').trim();
+  return normalized;
+}
+
 // ---------- 数据源 ----------
 
 /** 已注册源的能力清单（供前端渲染下拉与动态表单） */
@@ -38,35 +45,95 @@ api.get('/sources', (_req, res) => {
   res.json(listSources());
 });
 
+/** 列出某源对给定输入解析出的章节（TXT 源＝分章结果；URL 源＝单章） */
+api.post('/sources/:id/chapters', async (req, res) => {
+  try {
+    const source = getSource(req.params.id);
+    if (!source) throw new Error(`未找到数据源「${req.params.id}」`);
+    const inputs = normalizeInputs((req.body as { inputs?: Record<string, unknown> })?.inputs);
+    if (Object.keys(inputs).length === 0) throw new Error('请填写源表单输入（inputs）');
+    const chapters = await source.listChapters(inputs);
+    res.json({ chapters });
+  } catch (err) {
+    bad(res, err);
+  }
+});
+
+// ---------- 上传 ----------
+
+/** 上传文件（原始字节），落盘 data/uploads/，返回路径供 file 类源输入使用 */
+api.post('/uploads', raw({ type: () => true, limit: '64mb' }), async (req, res) => {
+  try {
+    const buf = req.body as Buffer;
+    if (!Buffer.isBuffer(buf) || buf.length === 0) throw new Error('上传内容为空');
+    const name = String(req.query.name || 'novel.txt').slice(0, 200);
+    // 中文小说 TXT 常见 GBK/ANSI 编码，明确提示而不是静默乱码
+    try {
+      new TextDecoder('utf-8', { fatal: true }).decode(buf);
+    } catch {
+      throw new Error('文件不是 UTF-8 编码（可能是 GBK/ANSI），请另存为 UTF-8 后重试');
+    }
+    const { id, filePath } = await saveUpload(buf, name);
+    res.json({ id, path: filePath, name, bytes: buf.length });
+  } catch (err) {
+    bad(res, err);
+  }
+});
+
 // ---------- 播客 ----------
 
 api.post('/podcasts', async (req, res) => {
   try {
-    const { sourceId, inputs, mode, maleVoice, femaleVoice } = req.body as {
+    const { sourceId, inputs, refs, mode, maleVoice, femaleVoice } = req.body as {
       sourceId?: string;
       inputs?: Record<string, unknown>;
+      refs?: unknown;
       mode?: PodcastMode;
       maleVoice?: string;
       femaleVoice?: string;
     };
     if (!inputs || typeof inputs !== 'object') throw new Error('请填写源表单输入（inputs）');
-    const normalized: Record<string, string> = {};
-    for (const [k, v] of Object.entries(inputs)) normalized[k] = String(v ?? '').trim();
-    if (!normalized.url) throw new Error('请填写小说章节页 URL');
+    const normalized = normalizeInputs(inputs);
     if (mode !== 'solo' && mode !== 'duo') throw new Error('请选择讲解形式（单人/双人）');
     const soloSpeaker = mode === 'solo' ? (femaleVoice ? 'female' : 'male') : undefined;
-    const jobId = createPodcastJob({
+    const base: Omit<CreatePodcastParams, 'ref'> = {
       sourceId: sourceId?.trim() || undefined,
       inputs: normalized,
       mode,
       soloSpeaker,
       maleVoice,
       femaleVoice,
-    });
-    res.json({ jobId });
+    };
+
+    // 批量模式：每章一个任务，串行执行；单章失败不影响其余章节
+    const refList = Array.isArray(refs)
+      ? refs.map((v) => String(v ?? '').trim()).filter(Boolean)
+      : [];
+    if (refList.length > 0) {
+      if (!base.sourceId) throw new Error('批量生成需要指定数据源（sourceId）');
+      if (refList.length > 200) throw new Error(`一次最多批量 ${200} 章，当前选了 ${refList.length} 章，请分批`);
+      const jobIds = refList.map((ref) => createPodcastJob({ ...base, ref }));
+      res.json({ jobId: jobIds[0], jobIds });
+      return;
+    }
+
+    // 单章模式：沿用 URL 通道行为（源内自动匹配 + 取第一章）
+    if (!normalized.url) throw new Error('请填写小说章节页 URL');
+    const jobId = createPodcastJob(base);
+    res.json({ jobId, jobIds: [jobId] });
   } catch (err) {
     bad(res, err);
   }
+});
+
+/** 任务状态查询：?ids=a,b,c 返回指定任务；不传则只返回队列概况 */
+api.get('/jobs', (req, res) => {
+  const ids = String(req.query.ids || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const jobs = ids.map((id) => getJob(id)).filter((j) => j !== null);
+  res.json({ jobs, queue: queueStats() });
 });
 
 api.get('/jobs/:id', (req, res) => {
