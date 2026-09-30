@@ -1,4 +1,5 @@
 import { Layout } from 'antd';
+import { GithubOutlined } from '@ant-design/icons';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import HomePage from './pages/HomePage';
 import DetailPage from './pages/DetailPage';
@@ -44,6 +45,16 @@ export default function App() {
       </Content>
       <Footer className="page-footer">
         <span className="mono">NOVELCAST</span> — 把小说章节变成一档可听的播客
+        <a
+          className="footer-gh"
+          href="https://github.com/themarchrain/novelcast"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="GitHub 仓库"
+        >
+          <GithubOutlined />
+          <span>GitHub</span>
+        </a>
       </Footer>
     </Layout>
   );
