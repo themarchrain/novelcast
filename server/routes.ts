@@ -2,7 +2,7 @@ import { Router, raw } from 'express';
 import { maskKey, isMaskedKey } from './config.js';
 import { loadConfig, saveConfig } from './store.js';
 import { getSource, listSources, selectSource } from './sources/registry.js';
-import { createPodcastJob, getJob, queueStats, type CreatePodcastParams } from './jobs.js';
+import { createPodcastJob, activeJobs, getJob, queueStats, recentJobs, retryJob, type CreatePodcastParams } from './jobs.js';
 import {
   deletePodcast,
   getPodcast,
@@ -126,14 +126,31 @@ api.post('/podcasts', async (req, res) => {
   }
 });
 
-/** 任务状态查询：?ids=a,b,c 返回指定任务；不传则只返回队列概况 */
+/**
+ * 任务查询：?ids=a,b,c 返回指定任务（兼容旧调用）；
+ * 不传 ids 时返回全量视图：活动任务 + 最近终态任务 + 队列概况（任务面板用）
+ */
 api.get('/jobs', (req, res) => {
   const ids = String(req.query.ids || '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
-  const jobs = ids.map((id) => getJob(id)).filter((j) => j !== null);
-  res.json({ jobs, queue: queueStats() });
+  if (ids.length > 0) {
+    const found = ids.map((id) => getJob(id)).filter((j) => j !== null);
+    res.json({ jobs: found, recent: [], queue: queueStats() });
+    return;
+  }
+  res.json({ jobs: activeJobs(), recent: recentJobs(10), queue: queueStats() });
+});
+
+/** 重试终态任务（失败/中断） */
+api.post('/jobs/:id/retry', (req, res) => {
+  try {
+    const job = retryJob(req.params.id);
+    res.json({ ok: true, job });
+  } catch (err) {
+    bad(res, err);
+  }
 });
 
 api.get('/jobs/:id', (req, res) => {

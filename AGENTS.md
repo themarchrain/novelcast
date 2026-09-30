@@ -45,7 +45,7 @@ NovelCast 是一条「章节文本 → 播客音频」的流水线：**接收一
 | `server/sources/types.ts` | 源契约：`NovelSource { id, label, matchUrl?, inputs, listChapters, fetchChapter }` |
 | `server/sources/registry.ts` | 启动扫描 `extensions-local/sources/` → 形状校验 → 注册；URL 自动匹配（注册序首个命中）；`GET /api/sources` 能力清单 |
 | `server/uploads.ts` | 上传文件落盘 `data/uploads/<id>/<原文件名>`（`POST /api/uploads` 收原始字节，校验 UTF-8）；file 类源输入的取值即该文件绝对路径 |
-| `server/jobs.ts` | 串行任务队列 + 进度上报；`GET /api/jobs?ids=` 批量查询（批量进度面板用） |
+| `server/jobs.ts` | 串行任务队列 + 进度上报；任务记录持久化 `data/jobs.json`（启动恢复：排队中的重新排队、执行中的标记 `interrupted` 可重试）；`GET /api/jobs`（无参＝活动任务+最近终态）、`POST /api/jobs/:id/retry` |
 | `server/script.ts` / `llm.ts` | LLM 写稿 / OpenAI 兼容客户端（BaseURL 自动补全 `/v1/chat/completions`，`#` 结尾用原样地址） |
 | `server/tts/*` | 三通道合成；`wav.ts` 解析 RIFF/PCM16，`voxcpm.ts` 用 lamejs 转 128kbps MP3 |
 | `server/mp3.ts` | MPEG1/2/2.5 Layer3 帧解析、ID3v2 跳过 |
@@ -85,7 +85,7 @@ NovelCast 是一条「章节文本 → 播客音频」的流水线：**接收一
 
 ## 当前状态
 
-- 核心流水线可用：数据源取章 → LLM 写稿 → 逐句语音合成 → MP3 拼接落盘，串行任务队列 + 进度上报；前端支持 URL 单章与 TXT 整本书批量两条输入通道。
+- 核心流水线可用：数据源取章 → LLM 写稿 → 逐句语音合成 → MP3 拼接落盘，串行任务队列 + 进度上报；前端支持 URL 单章与 TXT 整本书批量两条输入通道；任务记录落盘、服务重启自动恢复（排队中的重新排队、执行中的标记中断可重试），任意标签页/刷新后都能看到实时进度与最近任务。
 - 源契约与静态注册表已落地（`server/sources/`）：仓库零爬取实现、内置零源是刻意设计；本地源放 `extensions-local/sources/`（gitignore，不入库）。
 - 语音合成三通道可用：本地 VoxCPM（默认）/ OpenAI 兼容云端 / Edge 免费保底。
 - 测试双层：`npm test` 覆盖核心、`npm run test:local` 覆盖本地源。

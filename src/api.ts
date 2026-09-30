@@ -47,11 +47,13 @@ export const api = {
     return data as { id: string; path: string; name: string; bytes: number };
   },
 
-  /** 批量任务状态（含队列概况） */
-  jobsStatus: (ids: string[]) =>
-    request<{ jobs: Job[]; queue: { waiting: number; running: boolean } }>(
-      `/api/jobs?ids=${ids.map(encodeURIComponent).join(',')}`,
-    ),
+  /** 任务总览：活动任务 + 最近终态任务 + 队列概况（任意标签页/刷新后恢复进度视图） */
+  jobsOverview: () =>
+    request<{ jobs: Job[]; recent: Job[]; queue: { waiting: number; running: boolean } }>('/api/jobs'),
+
+  /** 重试失败/中断的任务 */
+  retryJob: (id: string) =>
+    request<{ ok: boolean; job: Job }>(`/api/jobs/${encodeURIComponent(id)}/retry`, { method: 'POST' }),
 
   getJob: (id: string) => request<Job>(`/api/jobs/${id}`),
 

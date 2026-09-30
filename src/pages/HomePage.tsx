@@ -21,16 +21,19 @@ export default function HomePage() {
   const [fileInfo, setFileInfo] = useState<{ path: string; name: string } | null>(null);
   const [chapters, setChapters] = useState<ChapterListItem[]>([]);
   const [selectedRefs, setSelectedRefs] = useState<string[]>([]);
-  const [batchJobIds, setBatchJobIds] = useState<string[]>([]);
-  const [batchJobs, setBatchJobs] = useState<Job[]>([]);
-  const [queueWaiting, setQueueWaiting] = useState(0);
-  const batchDoneRef = useRef(0);
+  // 任务面板：活动任务 + 最近终态任务（服务端为准，任意标签页/刷新后都能恢复）
+  const [tasks, setTasks] = useState<{ active: Job[]; recent: Job[]; waiting: number }>({
+    active: [],
+    recent: [],
+    waiting: 0,
+  });
+  const [retrying, setRetrying] = useState<string | null>(null);
+  const prevStatusRef = useRef<Map<string, Job['status']>>(new Map());
+  const seededRef = useRef(false);
   const [creating, setCreating] = useState(false);
-  const [job, setJob] = useState<Job | null>(null);
   const [podcasts, setPodcasts] = useState<PodcastMeta[]>([]);
   const [loadingList, setLoadingList] = useState(false);
   const [llmConfigured, setLlmConfigured] = useState<boolean | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refreshVoices = useCallback(async () => {
     try {
@@ -61,6 +64,38 @@ export default function HomePage() {
     }
   }, []);
 
+  /** 拉取任务总览；发现状态跃迁时提示并刷新节目单（首次加载只做种子，不打扰） */
+  const refreshTasks = useCallback(async () => {
+    try {
+      const { jobs, recent, queue } = await api.jobsOverview();
+      setTasks({ active: jobs, recent, waiting: queue.waiting });
+      const prev = prevStatusRef.current;
+      const all = [...jobs, ...recent];
+      if (!seededRef.current) {
+        for (const j of all) prev.set(j.id, j.status);
+        seededRef.current = true;
+        return;
+      }
+      for (const j of all) {
+        const old = prev.get(j.id);
+        if (old !== undefined && old !== j.status) {
+          const name = j.label || '任务';
+          if (j.status === 'done') {
+            message.success(`「${name}」已完成`);
+            void refreshList();
+          } else if (j.status === 'failed') {
+            message.warning(`「${name}」失败：${j.error || j.message}`);
+          } else if (j.status === 'interrupted') {
+            message.warning(`「${name}」被服务重启中断，可在任务面板重试`);
+          }
+        }
+        prev.set(j.id, j.status);
+      }
+    } catch {
+      // 轮询失败忽略，等下一轮
+    }
+  }, [refreshList]);
+
   useEffect(() => {
     void refreshVoices();
     void refreshList();
@@ -73,10 +108,14 @@ export default function HomePage() {
         setLlmConfigured(false);
       }
     })();
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
   }, [refreshVoices, refreshList, refreshSources]);
+
+  // 任务面板轮询：始终从服务端拉真实状态（多标签页 / 刷新后自动恢复视图）
+  useEffect(() => {
+    void refreshTasks();
+    const timer = setInterval(() => void refreshTasks(), 2500);
+    return () => clearInterval(timer);
+  }, [refreshTasks]);
 
   const maleVoices = voices.filter((v) => v.gender === 'male');
   const femaleVoices = voices.filter((v) => v.gender === 'female');
@@ -93,13 +132,6 @@ export default function HomePage() {
   const activeSource = urlSources.find((s) => s.id === sourceId);
   const urlField = activeSource?.inputs.find((f) => f.key === 'url');
   const extraInputs = activeSource?.inputs.filter((f) => f.key !== 'url') ?? [];
-
-  // 批量进度派生
-  const batchDone = batchJobs.filter((j) => j.status === 'done').length;
-  const batchFailed = batchJobs.filter((j) => j.status === 'failed').length;
-  const batchAllDone =
-    batchJobIds.length > 0 && batchJobs.length === batchJobIds.length && batchJobs.every((j) => j.status !== 'running');
-  const currentBatchJob = batchJobs.find((j) => j.status === 'running');
 
   // 音色列表异步加载后，补上未选择的默认音色
   useEffect(() => {
@@ -122,32 +154,6 @@ export default function HomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sources]);
 
-  // 批量任务轮询：进度面板 + 每完成一期刷新节目单
-  useEffect(() => {
-    if (batchJobIds.length === 0) return;
-    const timer = setInterval(async () => {
-      try {
-        const { jobs, queue } = await api.jobsStatus(batchJobIds);
-        setBatchJobs(jobs);
-        setQueueWaiting(queue.waiting);
-        const done = jobs.filter((j) => j.status === 'done').length;
-        if (done > batchDoneRef.current) {
-          batchDoneRef.current = done;
-          void refreshList();
-        }
-        if (jobs.length === batchJobIds.length && jobs.every((j) => j.status !== 'running')) {
-          clearInterval(timer);
-          const failed = jobs.filter((j) => j.status === 'failed').length;
-          if (failed > 0) message.warning(`批量生成结束：成功 ${jobs.length - failed} 期，失败 ${failed} 期`);
-          else message.success(`批量生成完成：共 ${jobs.length} 期`);
-        }
-      } catch {
-        // 轮询失败忽略，等下一轮
-      }
-    }, 2000);
-    return () => clearInterval(timer);
-  }, [batchJobIds, refreshList]);
-
   // 切换 TXT 数据源（分章策略可能不同）时，用已上传的文件重新解析
   useEffect(() => {
     if (!fileInfo || !txtSource) return;
@@ -156,26 +162,6 @@ export default function HomePage() {
       .catch((e) => message.error(e instanceof Error ? e.message : String(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [txtSourceId]);
-
-  const startPolling = (jobId: string) => {
-    if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = setInterval(async () => {
-      try {
-        const j = await api.getJob(jobId);
-        setJob({ ...j });
-        if (j.status !== 'running') {
-          if (pollRef.current) clearInterval(pollRef.current);
-          if (j.status === 'done' && j.podcastId) {
-            message.success('播客生成完成！');
-            void refreshList();
-            nav(`/podcast/${j.podcastId}`);
-          }
-        }
-      } catch {
-        // 轮询失败忽略
-      }
-    }, 1500);
-  };
 
   const fileKeyOf = (s: SourceInfo) => s.inputs.find((f) => f.type === 'file')?.key || 'file';
 
@@ -236,10 +222,7 @@ export default function HomePage() {
           ? { sourceId: txtSource.id, inputs, refs: selectedRefs, mode, ...(soloGender === 'male' ? { maleVoice } : { femaleVoice }) }
           : { sourceId: txtSource.id, inputs, refs: selectedRefs, mode, maleVoice, femaleVoice };
       const { jobIds } = await api.createPodcast(body);
-      batchDoneRef.current = 0;
-      setBatchJobs([]);
-      setJob(null);
-      setBatchJobIds(jobIds);
+      void refreshTasks();
       message.success(`已入队 ${jobIds.length} 个任务，按顺序依次生成`);
     } catch (e) {
       message.error(e instanceof Error ? e.message : String(e));
@@ -268,17 +251,8 @@ export default function HomePage() {
         mode === 'solo'
           ? { sourceId: sourceId || undefined, inputs, mode, ...(soloGender === 'male' ? { maleVoice } : { femaleVoice }) }
           : { sourceId: sourceId || undefined, inputs, mode, maleVoice, femaleVoice };
-      const { jobId } = await api.createPodcast(body);
-      setJob({
-        id: jobId,
-        status: 'running',
-        step: '排队中',
-        progress: 0,
-        message: '等待执行',
-        log: [],
-        createdAt: '',
-      });
-      startPolling(jobId);
+      await api.createPodcast(body);
+      void refreshTasks();
     } catch (e) {
       message.error(e instanceof Error ? e.message : String(e));
     } finally {
@@ -293,6 +267,19 @@ export default function HomePage() {
       void refreshList();
     } catch (e) {
       message.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const onRetry = async (id: string) => {
+    setRetrying(id);
+    try {
+      await api.retryJob(id);
+      message.success('已重新排队');
+      void refreshTasks();
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRetrying(null);
     }
   };
 
@@ -520,7 +507,7 @@ export default function HomePage() {
               <Button
                 type="primary"
                 icon={<AudioOutlined />}
-                loading={creating || (channel === 'url' && job?.status === 'running')}
+                loading={creating || (channel === 'url' && tasks.active.length > 0)}
                 onClick={onSubmit}
                 size="large"
               >
@@ -532,40 +519,52 @@ export default function HomePage() {
           </Space>
         </Form>
 
-        {channel === 'url' && job && (
+        {(tasks.active.length > 0 || tasks.recent.length > 0) && (
           <div style={{ marginTop: 16 }}>
-            <Progress percent={job.progress} status={job.status === 'failed' ? 'exception' : 'active'} showInfo={false} />
-            <Typography.Text style={{ color: job.status === 'failed' ? 'var(--error)' : 'var(--slate)', fontSize: 13 }}>
-              【{job.step}】{job.message}
-            </Typography.Text>
-            {job.log.length > 0 && (
-              <pre className="log-box" style={{ marginTop: 8 }}>
-                {job.log.slice(-8).join('\n')}
-              </pre>
+            {tasks.active.length > 0 && (
+              <>
+                <Progress percent={tasks.active[0].progress} status="active" showInfo={false} />
+                <Typography.Text style={{ color: 'var(--slate)', fontSize: 13 }}>
+                  进行中 {tasks.active.length} 个{tasks.waiting > 0 ? `（排队 ${tasks.waiting}）` : ''}
+                  {tasks.active[0].label ? `　当前：${tasks.active[0].label}` : ''}
+                </Typography.Text>
+                <div className="task-list" style={{ marginTop: 8 }}>
+                  {tasks.active.map((j) => (
+                    <div className="task-row" key={j.id}>
+                      <span className="task-name">{j.label || j.message}</span>
+                      <span className="task-step">
+                        {j.step}
+                        {j.step !== '排队中' ? ` ${j.progress}%` : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                {tasks.active.length === 1 && tasks.active[0].log.length > 0 && (
+                  <pre className="log-box" style={{ marginTop: 8 }}>
+                    {tasks.active[0].log.slice(-6).join('\n')}
+                  </pre>
+                )}
+              </>
             )}
-          </div>
-        )}
-
-        {channel === 'txt' && batchJobIds.length > 0 && (
-          <div style={{ marginTop: 16 }}>
-            <Progress
-              percent={Math.round((batchDone / batchJobIds.length) * 100)}
-              status={batchFailed > 0 ? 'exception' : batchAllDone ? 'success' : 'active'}
-              showInfo={false}
-            />
-            <Typography.Text style={{ color: 'var(--slate)', fontSize: 13 }}>
-              批量生成：完成 {batchDone}/{batchJobIds.length}
-              {batchFailed > 0 ? `，失败 ${batchFailed}` : ''}
-              {queueWaiting > 0 ? ` · 队列等待 ${queueWaiting}` : ''}
-              {currentBatchJob ? `　【${currentBatchJob.step}】${currentBatchJob.message}` : ''}
-            </Typography.Text>
-            {batchJobs.filter((j) => j.status === 'failed').length > 0 && (
-              <pre className="log-box" style={{ marginTop: 8 }}>
-                {batchJobs
-                  .filter((j) => j.status === 'failed')
-                  .map((j) => `✗ ${j.error || j.message}`)
-                  .join('\n')}
-              </pre>
+            {tasks.recent.length > 0 && (
+              <div className="task-list" style={{ marginTop: tasks.active.length > 0 ? 10 : 0 }}>
+                {tasks.recent.map((j) => (
+                  <div className="task-row" key={j.id}>
+                    <span className={`chip ${j.status === 'done' ? 'green' : j.status === 'failed' ? 'coral' : 'ink'}`}>
+                      {j.status === 'done' ? '完成' : j.status === 'failed' ? '失败' : '中断'}
+                    </span>
+                    <span className="task-name">{j.label || j.message}</span>
+                    {j.status !== 'done' && (
+                      <>
+                        <span className="task-step">{(j.error || j.message).slice(0, 60)}</span>
+                        <Button size="small" loading={retrying === j.id} onClick={() => onRetry(j.id)}>
+                          重试
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         )}

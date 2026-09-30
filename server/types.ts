@@ -83,10 +83,13 @@ export interface AppConfig {
 
 export interface Job {
   id: string;
-  status: 'running' | 'done' | 'failed';
+  /** interrupted：服务重启导致的中断（记录保留，可重试） */
+  status: 'running' | 'done' | 'failed' | 'interrupted';
   step: string;
   progress: number;
   message: string;
+  /** 人类可读的任务标签（如「蛊真人 · 第一章 初入江湖」），取到章节后填充 */
+  label?: string;
   log: string[];
   podcastId?: string;
   error?: string;

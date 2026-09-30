@@ -37,10 +37,12 @@ export interface PodcastData {
 
 export interface Job {
   id: string;
-  status: 'running' | 'done' | 'failed';
+  status: 'running' | 'done' | 'failed' | 'interrupted';
   step: string;
   progress: number;
   message: string;
+  /** 人类可读的任务标签（如「蛊真人 · 第一章 初入江湖」） */
+  label?: string;
   log: string[];
   podcastId?: string;
   error?: string;

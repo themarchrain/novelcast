@@ -1,3 +1,6 @@
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadConfig } from './store.js';
 import { selectSource } from './sources/registry.js';
 import type { ChapterRef } from './sources/types.js';
@@ -7,6 +10,21 @@ import { durationsForRanges } from './mp3.js';
 import { savePodcast, savePodcastAudio } from './store.js';
 import type { AudioSegmentTiming, Job, PodcastMeta, PodcastMode, Speaker } from './types.js';
 import { newId } from './util.js';
+
+/**
+ * 串行任务队列 + 任务记录持久化（data/jobs.json）。
+ *
+ * 可靠性约定：
+ * - 任务与浏览器无关：刷新/多标签页都从 `GET /api/jobs` 读取真实状态；
+ * - 进程内的排队与进度实时落盘；进程启动时恢复——
+ *   未开始的（仍在排队）自动重新排队，已开始的标记为 interrupted 可重试；
+ * - 产物（播客）本就落盘在 data/podcasts/，与任务记录相互独立。
+ */
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const JOBS_FILE = path.join(ROOT, 'data', 'jobs.json');
+/** 历史记录保留上限（终态任务，超出按创建时间淘汰最旧的） */
+const KEEP_TERMINAL = 200;
 
 const jobs = new Map<string, Job>();
 const paramsById = new Map<string, CreatePodcastParams>();
@@ -27,19 +45,150 @@ export interface CreatePodcastParams {
   femaleVoice?: string;
 }
 
+interface JobRecord {
+  job: Job;
+  params: CreatePodcastParams;
+}
+
+// ---------- 持久化 ----------
+
+let persistTimer: NodeJS.Timeout | null = null;
+let writeChain: Promise<void> = Promise.resolve();
+
+function snapshot(): JobRecord[] {
+  const records: JobRecord[] = [];
+  for (const job of jobs.values()) {
+    const params = paramsById.get(job.id);
+    if (params) records.push({ job, params });
+  }
+  return pruneRecords(records);
+}
+
+async function writeNow(): Promise<void> {
+  try {
+    await fs.mkdir(path.dirname(JOBS_FILE), { recursive: true });
+    const tmp = `${JOBS_FILE}.tmp`;
+    await fs.writeFile(tmp, JSON.stringify({ version: 1, jobs: snapshot() }, null, 2), 'utf8');
+    await fs.rename(tmp, JOBS_FILE);
+  } catch (err) {
+    console.warn('[任务] 任务记录落盘失败：', err instanceof Error ? err.message : err);
+  }
+}
+
+/** 落盘：immediate=true 用于创建/终态等关键节点；否则 500ms 去抖 */
+function persist(immediate = false): void {
+  if (immediate) {
+    if (persistTimer) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+    }
+    writeChain = writeChain.then(writeNow);
+    return;
+  }
+  if (persistTimer) return;
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    writeChain = writeChain.then(writeNow);
+  }, 500);
+}
+
+// ---------- 恢复规划（纯函数，便于测试） ----------
+
+/** 判定每条运行中记录的恢复动作：未开始（仍排队）→ 重新排队；已开始 → 标记中断 */
+export function planRecovery(records: JobRecord[]): { requeue: string[]; interrupted: string[] } {
+  const requeue: string[] = [];
+  const interrupted: string[] = [];
+  for (const r of records) {
+    if (r.job.status !== 'running') continue;
+    if (r.job.step === '排队中') requeue.push(r.job.id);
+    else interrupted.push(r.job.id);
+  }
+  return { requeue, interrupted };
+}
+
+/** 保留全部活动任务 + 最新 KEEP_TERMINAL 条终态任务（按创建时间淘汰最旧） */
+export function pruneRecords(records: JobRecord[], keepTerminal = KEEP_TERMINAL): JobRecord[] {
+  const active = records.filter((r) => r.job.status === 'running');
+  const terminal = records
+    .filter((r) => r.job.status !== 'running')
+    .sort((a, b) => b.job.createdAt.localeCompare(a.job.createdAt));
+  return [...active, ...terminal.slice(0, keepTerminal)].sort((a, b) =>
+    a.job.createdAt.localeCompare(b.job.createdAt),
+  );
+}
+
+/** 启动时加载任务记录；返回恢复摘要（供日志） */
+export async function initJobs(): Promise<{ loaded: number; requeued: number; interrupted: number }> {
+  let records: JobRecord[] = [];
+  try {
+    const parsed = JSON.parse(await fs.readFile(JOBS_FILE, 'utf8')) as { jobs?: JobRecord[] };
+    if (Array.isArray(parsed.jobs)) records = parsed.jobs.filter((r) => r && r.job && r.params);
+  } catch {
+    // 首次运行或文件损坏：从空开始
+  }
+
+  for (const r of records) {
+    jobs.set(r.job.id, r.job);
+    paramsById.set(r.job.id, r.params);
+  }
+
+  const { requeue, interrupted } = planRecovery(records);
+  for (const id of requeue) {
+    const job = jobs.get(id);
+    if (!job) continue;
+    job.message = '服务重启，已自动重新排队';
+    job.log.push(`[${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] 服务重启，自动重新排队`);
+    queue.push(id);
+  }
+  for (const id of interrupted) {
+    const job = jobs.get(id);
+    if (!job) continue;
+    job.status = 'interrupted';
+    job.step = '已中断';
+    job.error = '服务重启导致任务中断';
+    job.message = '任务被服务重启中断，可点击重试';
+    job.log.push(`[${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] 服务重启导致中断`);
+  }
+  queue.sort((a, b) => (jobs.get(a)?.createdAt || '').localeCompare(jobs.get(b)?.createdAt || ''));
+
+  persist(true);
+  if (queue.length > 0) void drain();
+  return { loaded: records.length, requeued: requeue.length, interrupted: interrupted.length };
+}
+
+// ---------- 查询 ----------
+
 export function getJob(id: string): Job | null {
   return jobs.get(id) || null;
 }
 
-/** 队列状态（批量进度面板用）：等待中的任务数 + 是否正在执行 */
+/** 活动任务（运行中/排队中），按创建时间升序 */
+export function activeJobs(): Job[] {
+  return [...jobs.values()]
+    .filter((j) => j.status === 'running')
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+/** 最近终态任务（完成/失败/中断），按创建时间降序 */
+export function recentJobs(limit = 10): Job[] {
+  return [...jobs.values()]
+    .filter((j) => j.status !== 'running')
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, limit);
+}
+
+/** 队列状态：等待中的任务数 + 是否正在执行 */
 export function queueStats(): { waiting: number; running: boolean } {
   return { waiting: queue.length, running };
 }
+
+// ---------- 任务 ----------
 
 function update(id: string, patch: Partial<Job>): void {
   const job = jobs.get(id);
   if (!job) return;
   Object.assign(job, patch);
+  persist(patch.status !== undefined); // 状态变化立即落盘，其余去抖
 }
 
 function log(id: string, line: string): void {
@@ -63,8 +212,28 @@ export function createPodcastJob(params: CreatePodcastParams): string {
   jobs.set(id, job);
   paramsById.set(id, params);
   queue.push(id);
+  persist(true);
   void drain();
   return id;
+}
+
+/** 重试：重新排队并完整执行（仅限终态任务） */
+export function retryJob(id: string): Job {
+  const job = jobs.get(id);
+  if (!job) throw new Error('任务不存在');
+  if (job.status === 'running') throw new Error('任务正在执行中，无需重试');
+  if (!paramsById.get(id)) throw new Error('任务参数缺失，无法重试');
+  job.status = 'running';
+  job.step = '排队中';
+  job.progress = 0;
+  job.message = '已重新排队，等待执行';
+  job.error = undefined;
+  job.podcastId = undefined;
+  log(id, '重新执行任务');
+  queue.push(id);
+  persist(true);
+  void drain();
+  return job;
 }
 
 async function drain(): Promise<void> {
@@ -73,6 +242,7 @@ async function drain(): Promise<void> {
   try {
     while (queue.length > 0) {
       const id = queue.shift()!;
+      persist(true); // 出队即落盘：此时记录仍是“排队中”，重启后会重新排队
       await runJob(id);
     }
   } finally {
@@ -114,11 +284,12 @@ async function pipeline(jobId: string, params: CreatePodcastParams): Promise<voi
   }
   const chapter = await source.fetchChapter(ref);
   const charCount = chapter.text.replace(/\s/g, '').length;
+  const label = [chapter.bookTitle, chapter.chapterTitle].filter(Boolean).join(' · ') || undefined;
   log(
     jobId,
     `提取成功（源：${source.id}）：${chapter.bookTitle || ''} ${chapter.chapterTitle || ''}，正文 ${charCount} 字`,
   );
-  update(jobId, { progress: 10, message: `正文提取完成，共 ${charCount} 字` });
+  update(jobId, { label, progress: 10, message: `正文提取完成，共 ${charCount} 字` });
 
   // 2. AI 写稿
   update(jobId, { step: 'AI 写稿', progress: 12, message: '正在让 AI 改写播客脚本…' });

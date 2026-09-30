@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { promises as fs } from 'node:fs';
 import { api } from './routes.js';
 import { initSources } from './sources/registry.js';
+import { initJobs } from './jobs.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = path.join(ROOT, 'dist');
@@ -14,6 +15,13 @@ const HOST = process.env.HOST || '127.0.0.1';
 async function main(): Promise<void> {
   // 静态扩展：启动时加载本地源（放入即注册，重启生效）
   await initSources();
+  // 任务记录恢复：排队中的自动重新排队，执行中的标记为中断可重试
+  const recovered = await initJobs();
+  if (recovered.loaded > 0) {
+    console.log(
+      `[任务] 已加载 ${recovered.loaded} 条任务记录（重新排队 ${recovered.requeued}，标记中断 ${recovered.interrupted}）`,
+    );
+  }
 
   const app = express();
   app.use(express.json({ limit: '2mb' }));

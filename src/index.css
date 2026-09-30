@@ -288,6 +288,31 @@ input[type='range'].deck-slider::-webkit-slider-thumb {
 .chapter-list .chapter-title { color: var(--ink); }
 .chapter-list .chapter-chars { margin-left: 8px; font-size: 12px; color: var(--stone); font-family: var(--font-mono); }
 
+/* 任务面板（活动任务 + 最近终态任务） */
+.task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-lg);
+  padding: 8px 12px;
+  background: var(--canvas);
+  max-height: 220px;
+  overflow: auto;
+}
+.task-row { display: flex; align-items: center; gap: 8px; font-size: 13px; min-width: 0; }
+.task-row .task-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.task-row .task-step {
+  flex-shrink: 0;
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--stone);
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+
 .meta-strip { font-size: 13px; color: var(--slate); display: flex; flex-wrap: wrap; gap: 4px 0; align-items: center; }
 .meta-strip .sep { margin: 0 10px; color: var(--hairline); }
 .meta-strip .hl { color: var(--ink); font-weight: 600; }
