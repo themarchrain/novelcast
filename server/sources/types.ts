@@ -9,7 +9,7 @@
 export interface SourceInputField {
   key: string;
   label: string;
-  /** TXT 整本书上传即 type:'file'（尚未实现） */
+  /** TXT 整本书上传即 type:'file'（取值为核心保存在 data/uploads/ 的文件绝对路径） */
   type: 'url' | 'text' | 'file';
   required: boolean;
   placeholder?: string;

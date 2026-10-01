@@ -376,7 +376,6 @@ export default function HomePage() {
                   name={['inputs', f.key]}
                   label={f.label}
                   rules={f.required ? [{ required: true, message: `请填写${f.label}` }] : undefined}
-                  extra={f.type === 'file' ? '文件上传暂不支持' : undefined}
                 >
                   <Input placeholder={f.placeholder} disabled={f.type === 'file'} allowClear onPressEnter={onSubmit} />
                 </Form.Item>
